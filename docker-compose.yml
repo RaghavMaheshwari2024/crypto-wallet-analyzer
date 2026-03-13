@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # MongoDB Database
+  # ==========================================
+  mongodb:
+    image: mongo:7.0
+    container_name: crypto-wallet-db
+    restart: always
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: crypto-wallet
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - crypto-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/crypto-wallet --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==========================================
+  # Python Processing Server
+  # ==========================================
+  python-server:
+    build:
+      context: ./python-server
+      dockerfile: Dockerfile
+    container_name: crypto-wallet-python
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/crypto-wallet
+      - LOG_LEVEL=info
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - crypto-network
+    volumes:
+      - ./python-server/app:/app
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ==========================================
+  # Node.js Backend API
+  # ==========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: crypto-wallet-backend
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - MONGODB_URI=mongodb://mongodb:27017/crypto-wallet
+      - PYTHON_SERVER_URL=http://python-server:8000
+      - GOLDRUSH_API_KEY=${GOLDRUSH_API_KEY}
+      - TATUM_API_KEY=${TATUM_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      python-server:
+        condition: service_healthy
+    networks:
+      - crypto-network
+    volumes:
+      - ./backend/src:/app/src
+      - /app/node_modules
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ==========================================
+  # React Frontend
+  # ==========================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: crypto-wallet-frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=http://localhost:5000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - crypto-network
+    volumes:
+      - ./frontend/src:/app/src
+      - /app/node_modules
+
+# ==========================================
+# Volumes
+# ==========================================
+volumes:
+  mongo-data:
+    driver: local
+
+# ==========================================
+# Networks
+# ==========================================
+networks:
+  crypto-network:
+    driver: bridge
